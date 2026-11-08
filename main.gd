@@ -10,16 +10,39 @@ const IDLE := 850.0
 const REDLINE := 6200.0
 const CHUNK := 60.0
 const CHUNKS := 6
+const NCH := 14        # 14 potongan x 60 m = rute berputar 840 m
+const LOOP := 840.0
 const KH := [0.0, 5.0, 6.5, 9.0, 15.0, 17.0, 18.5, 20.0, 24.0]
 const KSKY := [Color(0.02, 0.03, 0.08), Color(0.04, 0.05, 0.12), Color(0.95, 0.62, 0.45), Color(0.62, 0.78, 0.95), Color(0.62, 0.78, 0.95), Color(0.95, 0.72, 0.5), Color(0.75, 0.4, 0.3), Color(0.04, 0.05, 0.12), Color(0.02, 0.03, 0.08)]
 const KSUN := [0.05, 0.05, 0.6, 1.0, 1.0, 0.8, 0.3, 0.05, 0.05]
 const KAMB := [0.3, 0.3, 0.55, 0.75, 0.75, 0.6, 0.4, 0.3, 0.3]
+const CARS := [
+	{"name": "Toyota Avanza G MT 2018", "file": "res://avanza.glb", "std": false, "plate": "B 1446 ZMG", "tax": "01.31",
+		"eye": Vector3(0.37, 1.22, 0.15), "wheel": Vector3(0.37, 1.0, -0.3), "dash": Vector3(0, 0.99, -0.78), "dashw": 1.5, "rad": 0.3,
+		"pf": Vector3(0, 0.62, -2.11), "pr": Vector3(0, 0.62, 2.11), "trf": Color(0.5, 0.25, 0.0), "trr": Color(0.5, 0.25, 0.0)},
+	{"name": "Toyota Avanza (baru)", "file": "res://avanza_new.glb", "std": true, "plate": "B 1446 ZMG", "tax": "01.31",
+		"eye": Vector3(0.36, 1.2, -0.3), "wheel": Vector3(0.36, 0.92, -0.84), "dash": Vector3(0, 0.89, -1.27), "dashw": 1.4, "rad": 0.322,
+		"pf": Vector3(0, 0.5, -2.522), "pr": Vector3(0, 0.8, 1.895), "trf": Color(0.92, 0.92, 0.95), "trr": Color(0.45, 0.03, 0.03)},
+	{"name": "Daihatsu Sigra", "file": "res://sigra.glb", "std": true, "plate": "B 2155 SOQ", "tax": "03.22",
+		"eye": Vector3(0.36, 1.12, 0.0), "wheel": Vector3(0.36, 0.88, -0.55), "dash": Vector3(0, 0.86, -0.97), "dashw": 1.4, "rad": 0.27,
+		"pf": Vector3(0, 0.398, -1.975), "pr": Vector3(0, 0.731, 2.045), "trf": Color(0.5, 0.2, 0.0), "trr": Color(0.5, 0.2, 0.0)},
+]
 const MODEL_YAW_DEG := 0.0   # ubah ke 180.0 kalau model menghadap terbalik
 
 var car: Node3D
 var cam: Camera3D
 var hud: Hud
 var wheel3d: MeshInstance3D
+var car_idx := 0
+var interior: Node3D
+var hubs := {}
+var wheels := {}
+var lamp_mats := {}
+var turn_rest := {}
+var glass_mat: StandardMaterial3D
+var inner_mats: Array = []
+var plate_nodes: Array = []
+var inside_now := true
 var ext: Node3D
 var model: Node3D
 var env: Environment
@@ -160,58 +183,204 @@ func _build_env():
 	add_child(sun)
 
 
-func _tree(parent: Node, at: Vector3, sc: float):
-	_box(parent, Vector3(0.4, 3.0 * sc, 0.4), Color(0.35, 0.25, 0.15), at + Vector3(0, 1.5 * sc, 0))
-	var m := MeshInstance3D.new()
-	var sp := SphereMesh.new()
-	sp.radius = 2.0 * sc
-	sp.height = 3.4 * sc
-	sp.radial_segments = 8
-	sp.rings = 4
-	sp.material = _mat(Color(0.22, 0.4, 0.2))
-	m.mesh = sp
-	m.position = at + Vector3(0, 3.8 * sc, 0)
-	parent.add_child(m)
+class MB:
+	# pembuat mesh gabungan (1 draw call per potongan jalan, warna per-vertex)
+	var v := PackedVector3Array()
+	var n := PackedVector3Array()
+	var c := PackedColorArray()
+
+	func quad(a: Vector3, b: Vector3, cc: Vector3, d: Vector3, nrm: Vector3, col: Color):
+		if (b - a).cross(cc - a).dot(nrm) > 0.0:
+			var t := b
+			b = d
+			d = t
+		for p in [a, b, cc, a, cc, d]:
+			v.append(p)
+			n.append(nrm)
+			c.append(col)
+
+	func box(ct: Vector3, sz: Vector3, col: Color):
+		var h := sz * 0.5
+		var x0 := ct.x - h.x
+		var x1 := ct.x + h.x
+		var y0 := ct.y - h.y
+		var y1 := ct.y + h.y
+		var z0 := ct.z - h.z
+		var z1 := ct.z + h.z
+		quad(Vector3(x1, y0, z0), Vector3(x1, y1, z0), Vector3(x1, y1, z1), Vector3(x1, y0, z1), Vector3.RIGHT, col)
+		quad(Vector3(x0, y0, z0), Vector3(x0, y1, z0), Vector3(x0, y1, z1), Vector3(x0, y0, z1), Vector3.LEFT, col)
+		quad(Vector3(x0, y1, z0), Vector3(x1, y1, z0), Vector3(x1, y1, z1), Vector3(x0, y1, z1), Vector3.UP, col)
+		quad(Vector3(x0, y0, z1), Vector3(x1, y0, z1), Vector3(x1, y1, z1), Vector3(x0, y1, z1), Vector3.BACK, col)
+		quad(Vector3(x0, y0, z0), Vector3(x1, y0, z0), Vector3(x1, y1, z0), Vector3(x0, y1, z0), Vector3.FORWARD, col)
+
+	func mesh() -> ArrayMesh:
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = v
+		arr[Mesh.ARRAY_NORMAL] = n
+		arr[Mesh.ARRAY_COLOR] = c
+		var m := ArrayMesh.new()
+		m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		return m
+
+
+# Profil rute (840 m): 0-5 kota, 6-8 flyover, 9-10 kota, 11-13 underpass
+func _road_y(k: int, u: float) -> float:
+	var e := u * u * (3.0 - 2.0 * u)
+	if k == 6:
+		return 5.5 * e
+	if k == 7:
+		return 5.5
+	if k == 8:
+		return 5.5 * (1.0 - e)
+	if k == 11:
+		return -5.0 * e
+	if k == 12:
+		return -5.0
+	if k == 13:
+		return -5.0 * (1.0 - e)
+	return 0.0
+
+
+func _elev(sd: float) -> float:
+	var sm := fposmod(sd, LOOP)
+	var k := int(sm / CHUNK)
+	return _road_y(k, (sm - k * CHUNK) / CHUNK)
+
+
+func _strip(b: MB, k: int, u0: float, u1: float, xa: float, xb: float, yo: float, col: Color):
+	var z0 := 30.0 - 60.0 * u0
+	var z1 := 30.0 - 60.0 * u1
+	var y0 := _road_y(k, u0) + yo
+	var y1 := _road_y(k, u1) + yo
+	b.quad(Vector3(xa, y0, z0), Vector3(xb, y0, z0), Vector3(xb, y1, z1), Vector3(xa, y1, z1), Vector3.UP, col)
+
+
+func _build_chunk(k: int, rng: RandomNumberGenerator, vm: Material) -> MeshInstance3D:
+	var b := MB.new()
+	var fly := k >= 6 and k <= 8
+	var under := k >= 11
+	var city := not fly and not under
+	var asphalt := Color(0.30, 0.30, 0.32)
+	var conc := Color(0.62, 0.62, 0.6)
+	var yellow := Color(0.95, 0.8, 0.1)
+	var steps := 12
+	for i in steps:
+		var u0 := float(i) / steps
+		var u1 := float(i + 1) / steps
+		var z0 := 30.0 - 60.0 * u0
+		var z1 := 30.0 - 60.0 * u1
+		var y0 := _road_y(k, u0)
+		var y1 := _road_y(k, u1)
+		_strip(b, k, u0, u1, -7.5, 7.5, 0.0, asphalt)
+		_strip(b, k, u0, u1, -0.35, 0.35, 0.25, conc)
+		_strip(b, k, u0, u1, -0.62, -0.45, 0.02, yellow)
+		_strip(b, k, u0, u1, 0.45, 0.62, 0.02, yellow)
+		_strip(b, k, u0, u1, -7.25, -7.1, 0.02, Color.WHITE)
+		_strip(b, k, u0, u1, 7.1, 7.25, 0.02, Color.WHITE)
+		if i % 3 == 0:
+			_strip(b, k, u0, u1, -3.92, -3.78, 0.02, Color.WHITE)
+			_strip(b, k, u0, u1, 3.78, 3.92, 0.02, Color.WHITE)
+		for sm in [-1.0, 1.0]:
+			b.quad(Vector3(sm * 0.35, y0, z0), Vector3(sm * 0.35, y0 + 0.25, z0), Vector3(sm * 0.35, y1 + 0.25, z1), Vector3(sm * 0.35, y1, z1), Vector3(sm, 0, 0), conc)
+		for sx in [-1.0, 1.0]:
+			var nx := Vector3(sx, 0, 0)
+			var xw := 7.5 * sx
+			var xi := xw - sx * 0.3
+			if fly:
+				var yb0 := y0 - 0.9 if k == 7 else 0.0
+				var yb1 := y1 - 0.9 if k == 7 else 0.0
+				b.quad(Vector3(xw, yb0, z0), Vector3(xw, y0 + 0.9, z0), Vector3(xw, y1 + 0.9, z1), Vector3(xw, yb1, z1), nx, conc)
+				b.quad(Vector3(xi, y0, z0), Vector3(xi, y0 + 0.9, z0), Vector3(xi, y1 + 0.9, z1), Vector3(xi, y1, z1), -nx, conc)
+				b.quad(Vector3(xi, y0 + 0.9, z0), Vector3(xw, y0 + 0.9, z0), Vector3(xw, y1 + 0.9, z1), Vector3(xi, y1 + 0.9, z1), Vector3.UP, conc)
+			if under:
+				b.quad(Vector3(xw, y0, z0), Vector3(xw, 0.0, z0), Vector3(xw, 0.0, z1), Vector3(xw, y1, z1), -nx, conc)
+		if k == 7:
+			b.quad(Vector3(-7.5, y0 - 0.9, z0), Vector3(7.5, y0 - 0.9, z0), Vector3(7.5, y1 - 0.9, z1), Vector3(-7.5, y1 - 0.9, z1), Vector3.DOWN, conc)
+
+	# ground kiri-kanan (jalan dibiarkan terbuka supaya underpass bisa turun)
+	b.box(Vector3(-37.5, -0.1, 0), Vector3(60, 0.2, 60), Color(0.5, 0.5, 0.45))
+	b.box(Vector3(37.5, -0.1, 0), Vector3(60, 0.2, 60), Color(0.5, 0.5, 0.45))
+	b.box(Vector3(-8.5, 0.075, 0), Vector3(2.0, 0.15, 60), Color(0.62, 0.62, 0.62))
+	b.box(Vector3(8.5, 0.075, 0), Vector3(2.0, 0.15, 60), Color(0.62, 0.62, 0.62))
+
+	if k == 7:
+		# jalan di bawah flyover, simpang, dan pilar
+		b.quad(Vector3(-7.5, 0.01, 30), Vector3(7.5, 0.01, 30), Vector3(7.5, 0.01, -30), Vector3(-7.5, 0.01, -30), Vector3.UP, asphalt)
+		b.quad(Vector3(-60, 0.02, 8), Vector3(60, 0.02, 8), Vector3(60, 0.02, -8), Vector3(-60, 0.02, -8), Vector3.UP, Color(0.27, 0.27, 0.29))
+		for px in [-5.0, 0.0, 5.0]:
+			b.box(Vector3(px, 2.3, 0), Vector3(1.2, 4.6, 1.2), conc)
+	if k == 6:
+		b.quad(Vector3(-7.5, 0.0, -30), Vector3(7.5, 0.0, -30), Vector3(7.5, 5.5, -30), Vector3(-7.5, 5.5, -30), Vector3.FORWARD, conc)
+	if k == 8:
+		b.quad(Vector3(-7.5, 0.0, 30), Vector3(7.5, 0.0, 30), Vector3(7.5, 5.5, 30), Vector3(-7.5, 5.5, 30), Vector3.BACK, conc)
+	if k == 12:
+		# atap terowongan (jalan lintas di atasnya)
+		b.quad(Vector3(-7.5, 0.0, 30), Vector3(7.5, 0.0, 30), Vector3(7.5, 0.0, -30), Vector3(-7.5, 0.0, -30), Vector3.UP, asphalt)
+		b.quad(Vector3(-7.5, -0.5, 30), Vector3(7.5, -0.5, 30), Vector3(7.5, -0.5, -30), Vector3(-7.5, -0.5, -30), Vector3.DOWN, conc)
+		b.quad(Vector3(-7.5, -0.5, 30), Vector3(7.5, -0.5, 30), Vector3(7.5, 0.0, 30), Vector3(-7.5, 0.0, 30), Vector3.BACK, conc)
+		b.quad(Vector3(-7.5, -0.5, -30), Vector3(7.5, -0.5, -30), Vector3(7.5, 0.0, -30), Vector3(-7.5, 0.0, -30), Vector3.FORWARD, conc)
+
+	# gedung-gedung: menara kaca dan gedung menengah ala Sudirman-Thamrin
+	var pal := [Color(0.38, 0.52, 0.65), Color(0.3, 0.55, 0.55), Color(0.65, 0.65, 0.68), Color(0.8, 0.74, 0.62), Color(0.85, 0.86, 0.88), Color(0.2, 0.27, 0.35)]
+	for sx in [-1.0, 1.0]:
+		for j in 3:
+			if rng.randf() < 0.1:
+				continue
+			var w := rng.randf_range(14.0, 18.0)
+			var d := rng.randf_range(14.0, 22.0)
+			var h := rng.randf_range(12.0, 28.0)
+			if rng.randf() < 0.55:
+				h = rng.randf_range(30.0, 90.0)
+			var col: Color = pal[rng.randi() % pal.size()]
+			var zc := 20.0 - 20.0 * j
+			b.box(Vector3(sx * (10.5 + d * 0.5), h * 0.5, zc), Vector3(d, h, w), col)
+			var band := col.darkened(0.4)
+			var yy := 3.0
+			while yy < h - 1.0:
+				b.quad(Vector3(sx * 10.48, yy, zc - w * 0.5), Vector3(sx * 10.48, yy + 1.4, zc - w * 0.5), Vector3(sx * 10.48, yy + 1.4, zc + w * 0.5), Vector3(sx * 10.48, yy, zc + w * 0.5), Vector3(-sx, 0, 0), band)
+				yy += 4.0
+			if h > 25.0:
+				b.box(Vector3(sx * (10.5 + d * 0.5), h + 1.5, zc), Vector3(d * 0.4, 3.0, w * 0.4), col.darkened(0.25))
+
+	if city:
+		for sz in [-15.0, 15.0]:
+			for sx in [-1.0, 1.0]:
+				b.box(Vector3(sx * 7.9, 4.5, sz), Vector3(0.25, 9.0, 0.25), Color(0.25, 0.25, 0.28))
+				b.box(Vector3(sx * 6.9, 9.0, sz), Vector3(2.2, 0.2, 0.3), Color(0.25, 0.25, 0.28))
+		for sx in [-1.0, 1.0]:
+			var tz := rng.randf_range(-25.0, 25.0)
+			b.box(Vector3(sx * 9.0, 1.4, tz), Vector3(0.4, 2.8, 0.4), Color(0.35, 0.25, 0.15))
+			b.box(Vector3(sx * 9.0, 3.8, tz), Vector3(2.8, 2.4, 2.8), Color(0.2, 0.42, 0.2))
+
+	var mi := MeshInstance3D.new()
+	mi.mesh = b.mesh()
+	mi.material_override = vm
+	mi.visibility_range_end = 450.0
+	return mi
 
 
 func _build_world():
-	# Meniru Jl. Raya Parung: dua jalur dipisah median beton, tiap jalur 2 lajur,
-	# bahu tanah, ruko/warung rendah, tiang listrik, pohon, dan SPBU.
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 1234
-	var palette := [Color(0.2, 0.65, 0.6), Color(0.9, 0.85, 0.7), Color(0.7, 0.35, 0.25), Color(0.85, 0.85, 0.85), Color(0.5, 0.7, 0.4), Color(0.9, 0.75, 0.3)]
-	for i in CHUNKS:
+	rng.seed = 2026
+	var vm := StandardMaterial3D.new()
+	vm.vertex_color_use_as_albedo = true
+	vm.roughness = 1.0
+	for k in NCH:
 		var ch := Node3D.new()
 		add_child(ch)
-		ch.position.z = CHUNK - CHUNK * i
+		ch.add_child(_build_chunk(k, rng, vm))
 		chunks.append(ch)
-		_box(ch, Vector3(15, 0.1, CHUNK), Color(0.33, 0.33, 0.35), Vector3(0, -0.05, 0))
-		_box(ch, Vector3(120, 0.1, CHUNK), Color(0.55, 0.5, 0.4), Vector3(0, -0.15, 0))
-		_box(ch, Vector3(0.7, 0.28, CHUNK), Color(0.62, 0.62, 0.6), Vector3(0, 0.09, 0))
-		for sx in [-1, 1]:
-			_box(ch, Vector3(0.12, 0.02, CHUNK), Color(0.95, 0.8, 0.1), Vector3(sx * 0.55, 0.01, 0))
-			_box(ch, Vector3(0.12, 0.02, CHUNK), Color.WHITE, Vector3(sx * 7.2, 0.01, 0))
-			_box(ch, Vector3(4.0, 0.06, CHUNK), Color(0.72, 0.66, 0.55), Vector3(sx * 9.5, 0.0, 0))
-			for k in 5:
-				var dz := -CHUNK * 0.5 + 6.0 + k * 12.0
-				_box(ch, Vector3(0.12, 0.02, 4.0), Color.WHITE, Vector3(sx * 3.85, 0.01, dz))
-			for k in 4:
-				if i == 2 and sx == -1:
-					break
-				if rng.randf() < 0.2:
-					continue
-				var h := rng.randf_range(3.5, 8.0)
-				var col: Color = palette[rng.randi() % palette.size()]
-				_box(ch, Vector3(10, h, 11), col, Vector3(sx * 17.0, h * 0.5, -CHUNK * 0.5 + 7.5 + k * 15.0))
-			_box(ch, Vector3(0.25, 8.0, 0.25), Color(0.4, 0.38, 0.35), Vector3(sx * 11.0, 4.0, -15.0))
-			_box(ch, Vector3(0.25, 8.0, 0.25), Color(0.4, 0.38, 0.35), Vector3(sx * 11.0, 4.0, 15.0))
-			_tree(ch, Vector3(sx * 11.8, 0.0, rng.randf_range(-25.0, 25.0)), rng.randf_range(0.8, 1.2))
-		if i == 2:
-			# SPBU di sisi kiri
-			_box(ch, Vector3(9, 0.4, 10), Color(0.95, 0.75, 0.1), Vector3(-15.0, 4.5, 0))
-			_box(ch, Vector3(0.4, 4.5, 0.4), Color(0.8, 0.1, 0.1), Vector3(-12.0, 2.25, -4.0))
-			_box(ch, Vector3(0.4, 4.5, 0.4), Color(0.8, 0.1, 0.1), Vector3(-12.0, 2.25, 4.0))
-			_box(ch, Vector3(8, 3.5, 8), Color(0.9, 0.9, 0.88), Vector3(-23.0, 1.75, 0))
+	_place_chunks()
+
+
+func _place_chunks():
+	# potongan jalan digeser berulang sehingga rute 840 m terasa tak berujung
+	for k in chunks.size():
+		var ch: Node3D = chunks[k]
+		var base := -(k + 0.5) * CHUNK
+		var n := floorf((pos.z + 90.0 - base) / LOOP)
+		ch.position.z = base + n * LOOP
 
 
 func _build_car():
@@ -225,7 +394,6 @@ func _build_car():
 	_box(ext, Vector3(1.66, 0.6, 4.19), silver, Vector3(0, 0.65, 0))
 	_box(ext, Vector3(1.56, 0.55, 2.45), dark, Vector3(0, 1.25, 0.3))
 	_box(ext, Vector3(1.6, 0.07, 2.55), silver, Vector3(0, 1.58, 0.3))
-	_box(car, Vector3(1.6, 0.3, 0.5), Color(0.05, 0.05, 0.07), Vector3(0, 0.98, -0.75))
 	for sx in [-1, 1]:
 		for sz in [-1.33, 1.33]:
 			var w := MeshInstance3D.new()
@@ -242,13 +410,128 @@ func _build_car():
 		_box(ext, Vector3(0.28, 0.16, 0.04), Color(0.8, 0.05, 0.05), Vector3(sx * 0.65, 0.85, 2.1))
 		_box(ext, Vector3(0.3, 0.15, 0.04), Color(1.0, 0.95, 0.7), Vector3(sx * 0.6, 0.85, -2.1))
 	_box(ext, Vector3(0.8, 0.12, 0.04), Color(0.05, 0.05, 0.05), Vector3(0, 0.72, -2.1))
-	_plate(2.11, false)
-	_plate(-2.11, true)
-	# setir 3D (setir kanan: pengemudi di sisi kanan, x positif)
+	_load_car(car_idx)
+
+
+func _clear_car():
+	if model != null:
+		model.queue_free()
+		model = null
+	if interior != null:
+		interior.queue_free()
+		interior = null
+	for n in plate_nodes:
+		n.queue_free()
+	plate_nodes.clear()
+	hubs.clear()
+	wheels.clear()
+	lamp_mats.clear()
+	turn_rest.clear()
+	inner_mats.clear()
+	glass_mat = null
+	inside_now = true
+
+
+func _load_car(idx: int):
+	_clear_car()
+	car_idx = idx
+	var cfg: Dictionary = CARS[idx]
+	if ResourceLoader.exists(cfg["file"]):
+		var res = load(cfg["file"])
+		if res is PackedScene:
+			model = res.instantiate()
+			car.add_child(model)
+			if cfg["std"]:
+				_setup_std_model(cfg)
+			else:
+				_fit_model(model)
+	_build_interior(cfg)
+	_plate_at(cfg["pf"], true, cfg)
+	_plate_at(cfg["pr"], false, cfg)
+	_set_inside(false)
+
+
+func _lamp_mat(base: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = base
+	m.emission_enabled = true
+	m.emission = base
+	m.emission_energy_multiplier = 0.0
+	return m
+
+
+func _setup_std_model(cfg: Dictionary):
+	for k in ["FL", "FR", "RL", "RR"]:
+		var h = model.find_child("hub_" + k, true, false)
+		var w = model.find_child("wheel_" + k, true, false)
+		if h != null and w != null:
+			hubs[k] = h
+			wheels[k] = w
+		var tm = model.find_child("turn_" + k, true, false)
+		if tm is MeshInstance3D:
+			var rest: Color = cfg["trf"] if k.begins_with("F") else cfg["trr"]
+			var lm := _lamp_mat(rest)
+			tm.material_override = lm
+			lamp_mats["turn_" + k] = lm
+			turn_rest[k] = rest
+	var heads := {"head": Color(0.95, 0.97, 1.0), "tail": Color(0.75, 0.03, 0.03), "rev": Color(0.95, 0.95, 0.95)}
+	for k in heads:
+		var mi = model.find_child("lamp_" + k, true, false)
+		if mi is MeshInstance3D:
+			var lm2 := _lamp_mat(heads[k])
+			mi.material_override = lm2
+			lamp_mats[k] = lm2
+	var gl = model.find_child("glass", true, false)
+	if gl is MeshInstance3D:
+		glass_mat = StandardMaterial3D.new()
+		glass_mat.albedo_color = Color(0.05, 0.08, 0.12, 0.45)
+		glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		glass_mat.roughness = 0.1
+		glass_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		gl.material_override = glass_mat
+	var bd = model.find_child("body", true, false)
+	if bd is MeshInstance3D:
+		for i in bd.mesh.get_surface_count():
+			var m0 = bd.mesh.surface_get_material(i)
+			if m0 is StandardMaterial3D:
+				var m2: StandardMaterial3D = m0.duplicate()
+				m2.cull_mode = BaseMaterial3D.CULL_DISABLED
+				inner_mats.append([bd, i, m2])
+
+
+func _set_inside(v: bool):
+	if v == inside_now:
+		return
+	inside_now = v
+	for e in inner_mats:
+		var mi: MeshInstance3D = e[0]
+		mi.set_surface_override_material(e[1], e[2] if v else null)
+	if glass_mat != null:
+		glass_mat.albedo_color.a = 0.12 if v else 0.45
+
+
+func _build_interior(cfg: Dictionary):
+	interior = Node3D.new()
+	car.add_child(interior)
+	var dz: Vector3 = cfg["dash"]
+	var wp: Vector3 = cfg["wheel"]
+	var eye: Vector3 = cfg["eye"]
+	var dark := Color(0.1, 0.1, 0.11)
+	_box(interior, Vector3(cfg["dashw"], 0.22, 0.55), dark, dz)
+	_box(interior, Vector3(0.55, 0.14, 0.3), Color(0.06, 0.06, 0.07), Vector3(wp.x, dz.y + 0.17, dz.z + 0.05))
+	_box(interior, Vector3(0.4, 0.07, 0.02), Color(0.2, 0.3, 0.4), Vector3(wp.x, dz.y + 0.17, dz.z + 0.2))
+	_box(interior, Vector3(0.3, 0.4, 0.9), dark, Vector3(0, 0.5, dz.z + 0.95))
+	_box(interior, Vector3(0.07, 0.07, 0.07), Color(0.03, 0.03, 0.03), Vector3(0, 0.75, dz.z + 0.65))
+	var seat := Color(0.33, 0.31, 0.29)
+	for sx in [-0.36, 0.36]:
+		_box(interior, Vector3(0.5, 0.14, 0.5), seat, Vector3(sx, 0.45, eye.z + 0.28))
+		_box(interior, Vector3(0.5, 0.62, 0.12), seat, Vector3(sx, 0.8, eye.z + 0.55))
+	_box(interior, Vector3(1.3, 0.14, 0.5), seat, Vector3(0, 0.45, eye.z + 1.3))
+	_box(interior, Vector3(1.3, 0.6, 0.14), seat, Vector3(0, 0.82, eye.z + 1.6))
 	var piv := Node3D.new()
-	piv.position = Vector3(0.37, 1.0, -0.3)
-	piv.rotation.x = deg_to_rad(70.0)
-	car.add_child(piv)
+	piv.position = wp
+	piv.rotation.x = deg_to_rad(68.0)
+	interior.add_child(piv)
 	var tm := TorusMesh.new()
 	tm.inner_radius = 0.16
 	tm.outer_radius = 0.19
@@ -258,13 +541,71 @@ func _build_car():
 	wheel3d = MeshInstance3D.new()
 	wheel3d.mesh = tm
 	piv.add_child(wheel3d)
-	# model Avanza (opsional): taruh file avanza.glb di root proyek
-	if ResourceLoader.exists("res://avanza.glb"):
-		var res = load("res://avanza.glb")
-		if res is PackedScene:
-			model = res.instantiate()
-			car.add_child(model)
-			_fit_model(model)
+	_box(wheel3d, Vector3(0.34, 0.02, 0.03), Color(0.04, 0.04, 0.05), Vector3.ZERO)
+	_box(wheel3d, Vector3(0.03, 0.02, 0.17), Color(0.04, 0.04, 0.05), Vector3(0, 0, 0.085))
+	_box(wheel3d, Vector3(0.1, 0.04, 0.1), Color(0.25, 0.25, 0.27), Vector3.ZERO)
+
+
+func _plate_at(at: Vector3, flip: bool, cfg: Dictionary):
+	var root := Node3D.new()
+	root.position = at
+	if flip:
+		root.rotation.y = PI
+	car.add_child(root)
+	plate_nodes.append(root)
+	_box(root, Vector3(0.44, 0.14, 0.02), Color(0.02, 0.02, 0.02), Vector3.ZERO)
+	var l := Label3D.new()
+	l.text = cfg["plate"]
+	l.font_size = 32
+	l.pixel_size = 0.0018
+	l.outline_size = 0
+	l.modulate = Color.WHITE
+	l.position = Vector3(0, 0.02, 0.012)
+	root.add_child(l)
+	var l2 := Label3D.new()
+	l2.text = cfg["tax"]
+	l2.font_size = 20
+	l2.pixel_size = 0.0018
+	l2.outline_size = 0
+	l2.modulate = Color.WHITE
+	l2.position = Vector3(0, -0.04, 0.012)
+	root.add_child(l2)
+
+
+func _update_car_parts(dt: float):
+	var cfg: Dictionary = CARS[car_idx]
+	if not paused:
+		var rad: float = cfg["rad"]
+		for k in wheels:
+			var w: Node3D = wheels[k]
+			w.rotation.x = fposmod(w.rotation.x - speed * dt / rad, TAU)
+	for k in ["FL", "FR"]:
+		if hubs.has(k):
+			var h: Node3D = hubs[k]
+			h.rotation.y = -steer
+	if lamp_mats.is_empty():
+		return
+	var bl := fmod(blink, 0.8) < 0.4
+	var hi := high_on or pass_on
+	if lamp_mats.has("head"):
+		var lh: StandardMaterial3D = lamp_mats["head"]
+		lh.emission_energy_multiplier = (3.0 if hi else 1.6) if (low_on or hi) else 0.0
+	if lamp_mats.has("tail"):
+		var lt: StandardMaterial3D = lamp_mats["tail"]
+		lt.emission_energy_multiplier = 3.0 if brake > 0.05 else (0.8 if low_on else 0.15)
+	if lamp_mats.has("rev"):
+		var lr: StandardMaterial3D = lamp_mats["rev"]
+		lr.emission_energy_multiplier = 2.5 if gear == -1 else 0.0
+	for k in ["FL", "FR", "RL", "RR"]:
+		var key := "turn_" + k
+		if lamp_mats.has(key):
+			var lm: StandardMaterial3D = lamp_mats[key]
+			var active := (sig == -1 and k.ends_with("L")) or (sig == 1 and k.ends_with("R")) or hazard
+			var on := active and bl
+			var col: Color = Color(1.0, 0.55, 0.05) if on else turn_rest[k]
+			lm.albedo_color = col
+			lm.emission = col
+			lm.emission_energy_multiplier = 3.0 if on else 0.0
 
 
 func _collect(n: Node, out: Array):
@@ -399,6 +740,7 @@ func _sim(dt: float):
 	heading = clampf(heading, -0.6, 0.6)
 	pos += Vector3(-sin(heading), 0.0, -cos(heading)) * speed * dt
 	pos.x = clampf(pos.x, -6.4, -1.2)  # tetap di jalurnya, tidak naik median
+	pos.y = _elev(-pos.z)
 
 
 func _kf(vals: Array, h: float):
@@ -515,10 +857,9 @@ func _enter_play():
 	handbrake = false
 	pos = Vector3(-5.6, 0.0, 0.0)
 	cam_mode = 1
-	for i in CHUNKS:
-		var ch: Node3D = chunks[i]
-		ch.position.z = CHUNK - CHUNK * i
+	for ch: Node3D in chunks:
 		ch.visible = true
+	_place_chunks()
 	_say("Injak kopling, lalu tekan START", 6.0)
 
 
@@ -534,11 +875,12 @@ func _process(delta):
 			_sim(dt)
 			time_h += dt / 60.0   # 1 detik nyata = 1 menit di game
 		car.position = pos
-		car.rotation.y = heading
+		var s0 := -pos.z
+		var pitch := atan2(_elev(s0 + 3.0) - _elev(s0 - 3.0), 6.0)
+		car.rotation = Vector3(pitch, heading, 0.0)
 		wheel3d.rotation.y = -steer_in * 1.6
-		for ch: Node3D in chunks:
-			if ch.position.z - pos.z > CHUNK * 1.5:
-				ch.position.z -= CHUNK * CHUNKS
+		_update_car_parts(dt)
+		_place_chunks()
 		clouds.position = Vector3(pos.x, 0.0, pos.z)
 	_apply_time()
 	_update_camera()
@@ -549,11 +891,13 @@ func _process(delta):
 
 func _update_camera():
 	var inside := state == "play" and cam_mode == 1
+	var std: bool = model != null and CARS[car_idx]["std"]
 	if model != null:
-		model.visible = not inside
-		ext.visible = inside
+		model.visible = std or not inside
+		ext.visible = (not std) and inside
 	else:
 		ext.visible = true
+	_set_inside(inside and std)
 	if state == "menu":
 		var tgt := Vector3(0, 0.8, 0)
 		cam.fov = 45.0
@@ -562,7 +906,7 @@ func _update_camera():
 		return
 	if cam_mode == 1:
 		cam.fov = 70.0
-		cam.global_transform = car.global_transform * Transform3D(Basis(), Vector3(0.37, 1.22, 0.15))
+		cam.global_transform = car.global_transform * Transform3D(Basis(), CARS[car_idx]["eye"])
 	elif cam_mode == 2:
 		cam.fov = 60.0
 		var target := car.position + Vector3(0, 1.0, 0)
@@ -619,7 +963,15 @@ func _input(e):
 		_touch_move(e.index, e.position, e.relative)
 
 
+func r_arrow(i: int, s: Vector2) -> Rect2: return Rect2(s.x * (0.10 if i == 0 else 0.84), s.y * 0.34, s.x * 0.06, s.y * 0.16)
+
+
 func _menu_touch(p: Vector2, s: Vector2):
+	for i in 2:
+		if r_arrow(i, s).has_point(p):
+			var d := -1 if i == 0 else 1
+			_load_car((car_idx + d + CARS.size()) % CARS.size())
+			return
 	for i in 3:
 		if r_menu_btn(i, s).has_point(p):
 			if i == 1:
@@ -819,7 +1171,14 @@ func _draw_menu(c: Control, s: Vector2, font: Font):
 	c.draw_string(font, Vector2(s.x * 0.05, s.y * 0.105), "MANUAL DRIVE", HORIZONTAL_ALIGNMENT_LEFT, -1, 44, gold)
 	c.draw_style_box(sb_btn, r_gear(s))
 	c.draw_string(font, r_gear(s).position + Vector2(0, r_gear(s).size.y * 0.62), "SET", HORIZONTAL_ALIGNMENT_CENTER, r_gear(s).size.x, 18, Color.WHITE)
-	c.draw_string(font, Vector2(0, s.y * 0.71), "Avanza G MT 2018 - B 1446 ZMG", HORIZONTAL_ALIGNMENT_CENTER, s.x, 24, Color(0.75, 0.78, 0.85))
+	c.draw_string(font, Vector2(0, s.y * 0.71), CARS[car_idx]["name"] + " - " + CARS[car_idx]["plate"], HORIZONTAL_ALIGNMENT_CENTER, s.x, 24, Color(0.75, 0.78, 0.85))
+	for i in 2:
+		var ar := r_arrow(i, s)
+		c.draw_style_box(sb_btn, ar)
+		var ax := ar.position.x + ar.size.x * 0.5
+		var ay := ar.position.y + ar.size.y * 0.5
+		var dr := -1.0 if i == 0 else 1.0
+		c.draw_colored_polygon(PackedVector2Array([Vector2(ax + dr * 12.0, ay), Vector2(ax - dr * 8.0, ay - 14.0), Vector2(ax - dr * 8.0, ay + 14.0)]), gold)
 	var names := ["Garasi", "Free Mode", "Karir"]
 	for i in 3:
 		var r := r_menu_btn(i, s)
@@ -945,4 +1304,4 @@ func draw_hud(c: Control):
 		c.draw_rect(Rect2(0, 0, s.x, s.y), Color(0, 0, 0, 0.5))
 		c.draw_string(font, Vector2(0, s.y * 0.45), "PAUSE", HORIZONTAL_ALIGNMENT_CENTER, s.x, 48, Color.WHITE)
 		_btn(c, r_menu(s), "KE MENU", true, Color(0.2, 0.5, 0.8, 0.95), 22)
-		c.draw_string(font, Vector2(0, s.y * 0.88), "Model: 2015 Toyota Avanza G 1.3 oleh Raysh (sketchfab.com/Ray2007ben), CC BY 4.0", HORIZONTAL_ALIGNMENT_CENTER, s.x, 16, Color(0.85, 0.85, 0.9))
+		c.draw_string(font, Vector2(0, s.y * 0.88), "Model: Avanza 2015 oleh Raysh; Indonesian LMPV (Avanza baru, Sigra) oleh Han66st - semua CC BY 4.0, Sketchfab", HORIZONTAL_ALIGNMENT_CENTER, s.x, 16, Color(0.85, 0.85, 0.9))
