@@ -13,19 +13,17 @@ jobs:
 
       - name: Setup
         run: |
-          set -x
-          ls -la /root/.local/share/godot/export_templates/ || true
-          TPL=$(find / -name android_debug.apk -not -path "/proc/*" 2>/dev/null | head -1)
-          echo "template: $TPL"
-          mkdir -p ~/.local/share/godot/export_templates/4.3.stable ~/.config/godot build
-          cp -r "$(dirname "$TPL")"/. ~/.local/share/godot/export_templates/4.3.stable/
-          test -f ~/.local/share/godot/export_templates/4.3.stable/android_debug.apk || { echo "TEMPLATE NOT FOUND"; exit 1; }
+          mkdir -p ~/.local/share/godot/export_templates ~/.config/godot build
+          mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/ || true
           keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore debug.keystore -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
           JAVA_DIR=$(dirname $(dirname $(readlink -f $(which javac))))
           SDK_DIR=${ANDROID_HOME:-/usr/lib/android-sdk}
-          SDKM=$(which sdkmanager || find $SDK_DIR /usr -name sdkmanager -type f 2>/dev/null | head -1)
-          yes | "$SDKM" --sdk_root="$SDK_DIR" "build-tools;34.0.0" || true
           printf '[gd_resource type="EditorSettings" format=3]\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\n' "$SDK_DIR" "$JAVA_DIR" > ~/.config/godot/editor_settings-4.tres
+
+      - name: Check scripts
+        run: |
+          godot --headless --path . --check-only --script res://main.gd 2>&1 | tee check.log || true
+          if grep -E "SCRIPT ERROR|Parse Error" check.log; then echo "ADA ERROR SCRIPT DI ATAS"; exit 1; fi
 
       - name: Export APK
         env:
