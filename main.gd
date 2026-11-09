@@ -190,11 +190,12 @@ class MB:
 	var c := PackedColorArray()
 
 	func quad(a: Vector3, b: Vector3, cc: Vector3, d: Vector3, nrm: Vector3, col: Color):
+		var p1 := b
+		var p3 := d
 		if (b - a).cross(cc - a).dot(nrm) > 0.0:
-			var t := b
-			b = d
-			d = t
-		for p in [a, b, cc, a, cc, d]:
+			p1 = d
+			p3 = b
+		for p in [a, p1, cc, a, cc, p3]:
 			v.append(p)
 			n.append(nrm)
 			c.append(col)
@@ -285,8 +286,8 @@ func _build_chunk(k: int, rng: RandomNumberGenerator, vm: Material) -> MeshInsta
 			b.quad(Vector3(sm * 0.35, y0, z0), Vector3(sm * 0.35, y0 + 0.25, z0), Vector3(sm * 0.35, y1 + 0.25, z1), Vector3(sm * 0.35, y1, z1), Vector3(sm, 0, 0), conc)
 		for sx in [-1.0, 1.0]:
 			var nx := Vector3(sx, 0, 0)
-			var xw := 7.5 * sx
-			var xi := xw - sx * 0.3
+			var xw: float = 7.5 * sx
+			var xi: float = xw - sx * 0.3
 			if fly:
 				var yb0 := y0 - 0.9 if k == 7 else 0.0
 				var yb1 := y1 - 0.9 if k == 7 else 0.0
@@ -597,11 +598,11 @@ func _update_car_parts(dt: float):
 		var lr: StandardMaterial3D = lamp_mats["rev"]
 		lr.emission_energy_multiplier = 2.5 if gear == -1 else 0.0
 	for k in ["FL", "FR", "RL", "RR"]:
-		var key := "turn_" + k
+		var key: String = "turn_" + k
 		if lamp_mats.has(key):
 			var lm: StandardMaterial3D = lamp_mats[key]
-			var active := (sig == -1 and k.ends_with("L")) or (sig == 1 and k.ends_with("R")) or hazard
-			var on := active and bl
+			var active: bool = (sig == -1 and k.ends_with("L")) or (sig == 1 and k.ends_with("R")) or hazard
+			var on: bool = active and bl
 			var col: Color = Color(1.0, 0.55, 0.05) if on else turn_rest[k]
 			lm.albedo_color = col
 			lm.emission = col
