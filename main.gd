@@ -17,16 +17,18 @@ const KSKY := [Color(0.02, 0.03, 0.08), Color(0.04, 0.05, 0.12), Color(0.95, 0.6
 const KSUN := [0.05, 0.05, 0.6, 1.0, 1.0, 0.8, 0.3, 0.05, 0.05]
 const KAMB := [0.3, 0.3, 0.55, 0.75, 0.75, 0.6, 0.4, 0.3, 0.3]
 const CARS := [
-	{"name": "Toyota Avanza G MT 2018", "file": "res://avanza.glb", "std": false, "plate": "B 1446 ZMG", "tax": "01.31",
+	{"name": "Toyota Avanza G MT 2018", "file": "res://avanza.glb", "std": false, "eng": "a", "horn": 1.0, "plate": "B 1446 ZMG", "tax": "01.31",
 		"eye": Vector3(0.37, 1.22, 0.15), "wheel": Vector3(0.37, 1.0, -0.3), "dash": Vector3(0, 0.99, -0.78), "dashw": 1.5, "rad": 0.3,
 		"pf": Vector3(0, 0.62, -2.11), "pr": Vector3(0, 0.62, 2.11), "trf": Color(0.5, 0.25, 0.0), "trr": Color(0.5, 0.25, 0.0)},
-	{"name": "Toyota Avanza (baru)", "file": "res://avanza_new.glb", "std": true, "plate": "B 1446 ZMG", "tax": "01.31",
+	{"name": "Toyota Avanza (baru)", "file": "res://avanza_new.glb", "std": true, "eng": "b", "horn": 1.05, "plate": "B 1446 ZMG", "tax": "01.31",
 		"eye": Vector3(0.36, 1.2, -0.3), "wheel": Vector3(0.36, 0.92, -0.84), "dash": Vector3(0, 0.89, -1.27), "dashw": 1.4, "rad": 0.322,
 		"pf": Vector3(0, 0.5, -2.522), "pr": Vector3(0, 0.8, 1.895), "trf": Color(0.92, 0.92, 0.95), "trr": Color(0.45, 0.03, 0.03)},
-	{"name": "Daihatsu Sigra", "file": "res://sigra.glb", "std": true, "plate": "B 2155 SOQ", "tax": "03.22",
+	{"name": "Daihatsu Sigra", "file": "res://sigra.glb", "std": true, "eng": "c", "horn": 0.95, "plate": "B 2155 SOQ", "tax": "03.22",
 		"eye": Vector3(0.36, 1.12, 0.0), "wheel": Vector3(0.36, 0.88, -0.55), "dash": Vector3(0, 0.86, -0.97), "dashw": 1.4, "rad": 0.27,
 		"pf": Vector3(0, 0.398, -1.975), "pr": Vector3(0, 0.731, 2.045), "trf": Color(0.5, 0.2, 0.0), "trr": Color(0.5, 0.2, 0.0)},
 ]
+const LOCK := 9.42478   # 1,5 putaran setir ke tiap sisi
+const ROUTE := [0, 1, 2, 3, 6, 7, 8, 4, 5, 9, 10, 0, 1, 2, 11, 12, 13, 3, 4, 5, 9, 10, 0, 1, 6, 7, 8, 2, 3, 4, 5, 11, 12, 13, 9, 10, 0, 1, 2, 3, 4, 5, 9, 10, 0, 1, 2]
 const MODEL_YAW_DEG := 0.0   # ubah ke 180.0 kalau model menghadap terbalik
 
 var car: Node3D
@@ -43,6 +45,20 @@ var glass_mat: StandardMaterial3D
 var inner_mats: Array = []
 var plate_nodes: Array = []
 var inside_now := true
+var wheel_angle := 0.0
+var wheel_held := false
+var lever := Vector2(0.5, 0.5)
+var horn_on := false
+var start_timer := 0.0
+var last_blink := false
+var route_len := 0.0
+var barriers: Node3D
+var engine_type := "a"
+var eng_p: Array = []
+var starter_p: AudioStreamPlayer
+var horn_p: AudioStreamPlayer
+var tick_p: AudioStreamPlayer
+var road_p: AudioStreamPlayer
 var ext: Node3D
 var model: Node3D
 var env: Environment
@@ -53,6 +69,12 @@ var clouds: Node3D
 var cloud_mat: StandardMaterial3D
 var sb_btn: StyleBoxFlat
 var sb_dash: StyleBoxFlat
+var sb_slot: StyleBoxFlat
+var sb_pad: StyleBoxFlat
+var sb_on: StyleBoxFlat
+var sb_pill: StyleBoxFlat
+var amb_p: AudioStreamPlayer
+var sfx := {}
 var state := "menu"
 var menu_ang := 0.6
 var time_h := 9.0
@@ -121,7 +143,20 @@ func _ready():
 	sb_dash = StyleBoxFlat.new()
 	sb_dash.bg_color = Color(0.22, 0.22, 0.23, 0.95)
 	sb_dash.corner_radius_top_left = 42
-	sb_dash.corner_radius_top_right = 42
+	sb_dash.corner_radius_top_right = 34
+	sb_slot = StyleBoxFlat.new()
+	sb_slot.bg_color = Color(0.04, 0.04, 0.06, 0.95)
+	sb_slot.set_corner_radius_all(12)
+	sb_pad = StyleBoxFlat.new()
+	sb_pad.bg_color = Color(0.62, 0.64, 0.68)
+	sb_pad.set_corner_radius_all(6)
+	sb_on = StyleBoxFlat.new()
+	sb_on.set_corner_radius_all(14)
+	sb_pill = StyleBoxFlat.new()
+	sb_pill.bg_color = Color(0.2, 0.04, 0.04, 0.9)
+	sb_pill.set_border_width_all(2)
+	sb_pill.border_color = Color(0.9, 0.25, 0.2)
+	sb_pill.set_corner_radius_all(12)
 	headlight = SpotLight3D.new()
 	headlight.position = Vector3(0, 0.9, -2.0)
 	headlight.rotation_degrees.x = -3.0
@@ -140,6 +175,7 @@ func _ready():
 	platform.position.y = -0.1
 	add_child(platform)
 	_build_clouds()
+	_build_audio()
 	_enter_menu()
 
 
@@ -244,9 +280,10 @@ func _road_y(k: int, u: float) -> float:
 
 
 func _elev(sd: float) -> float:
-	var sm := fposmod(sd, LOOP)
-	var k := int(sm / CHUNK)
-	return _road_y(k, (sm - k * CHUNK) / CHUNK)
+	var i := int(floorf(sd / CHUNK))
+	if i < 0 or i >= ROUTE.size():
+		return 0.0
+	return _road_y(ROUTE[i], (sd - i * CHUNK) / CHUNK)
 
 
 func _strip(b: MB, k: int, u0: float, u1: float, xa: float, xb: float, yo: float, col: Color):
@@ -367,12 +404,26 @@ func _build_world():
 	var vm := StandardMaterial3D.new()
 	vm.vertex_color_use_as_albedo = true
 	vm.roughness = 1.0
+	var meshes: Array = []
 	for k in NCH:
-		var ch := Node3D.new()
-		add_child(ch)
-		ch.add_child(_build_chunk(k, rng, vm))
-		chunks.append(ch)
-	_place_chunks()
+		var tmp := _build_chunk(k, rng, vm)
+		meshes.append(tmp.mesh)
+		tmp.free()
+	for i in ROUTE.size():
+		var inst := MeshInstance3D.new()
+		inst.mesh = meshes[ROUTE[i]]
+		inst.material_override = vm
+		inst.visibility_range_end = 450.0
+		inst.position.z = -(i + 0.5) * CHUNK
+		add_child(inst)
+		chunks.append(inst)
+	route_len = ROUTE.size() * CHUNK
+	barriers = Node3D.new()
+	add_child(barriers)
+	for zz in [9.5, -route_len + 1.0]:
+		_box(barriers, Vector3(15, 1.2, 0.8), Color(0.9, 0.2, 0.15), Vector3(0, 0.6, zz))
+		_box(barriers, Vector3(15, 0.3, 0.85), Color.WHITE, Vector3(0, 0.75, zz))
+		_box(barriers, Vector3(90, 22, 2), Color(0.55, 0.58, 0.64), Vector3(0, 11, zz + (3.0 if zz > 0 else -3.0)))
 
 
 func _place_chunks():
@@ -414,6 +465,111 @@ func _build_car():
 	_load_car(car_idx)
 
 
+func _wav(path: String, loop: bool) -> AudioStreamWAV:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return null
+	var b := f.get_buffer(f.get_length())
+	var st := AudioStreamWAV.new()
+	st.format = AudioStreamWAV.FORMAT_16_BITS
+	st.mix_rate = 22050
+	st.stereo = false
+	st.data = b.slice(44)
+	if loop:
+		st.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		st.loop_begin = 0
+		st.loop_end = int(st.data.size() / 2)
+	return st
+
+
+func _mk_player(sname: String, loop: bool, db: float) -> AudioStreamPlayer:
+	var p := AudioStreamPlayer.new()
+	p.stream = _wav("res://%s.snd" % sname, loop)
+	p.volume_db = db
+	add_child(p)
+	return p
+
+
+func _build_audio():
+	for i in 3:
+		var p := AudioStreamPlayer.new()
+		add_child(p)
+		eng_p.append(p)
+	starter_p = _mk_player("sfx_starter", false, -4.0)
+	horn_p = _mk_player("sfx_horn", true, -2.0)
+	tick_p = _mk_player("sfx_tick", false, -8.0)
+	road_p = _mk_player("sfx_road", true, -6.0)
+	amb_p = _mk_player("sfx_ambient", true, -17.0)
+	for k in ["stall", "clunk", "hb"]:
+		sfx[k] = _mk_player("sfx_" + k, false, -3.0)
+	_apply_sounds()
+
+
+func _play_sfx(k: String):
+	var p: AudioStreamPlayer = sfx[k]
+	if p.stream != null:
+		p.play()
+
+
+func _apply_sounds():
+	var names := ["low", "mid", "high"]
+	for i in eng_p.size():
+		var p: AudioStreamPlayer = eng_p[i]
+		p.stop()
+		p.stream = _wav("res://sfx_eng_%s_%s.snd" % [engine_type, names[i]], true)
+	horn_p.pitch_scale = CARS[car_idx]["horn"]
+
+
+func _update_audio(dt: float):
+	var live := state == "play" and not paused
+	var running := live and engine_on
+	var bases := [1000.0, 3000.0, 5500.0]
+	var w0 := clampf((3000.0 - rpm) / 1800.0, 0.0, 1.0)
+	var w2 := clampf((rpm - 3600.0) / 1600.0, 0.0, 1.0)
+	var ws := [w0, clampf(1.0 - w0 - w2, 0.0, 1.0), w2]
+	var vol := (0.5 + 0.5 * gas) * 0.9
+	if rpm > REDLINE * 0.97 and fmod(blink * 12.0, 1.0) < 0.5:
+		vol *= 0.5
+	for i in eng_p.size():
+		var p: AudioStreamPlayer = eng_p[i]
+		if p.stream == null:
+			continue
+		if running:
+			p.pitch_scale = clampf(rpm / bases[i], 0.4, 2.6)
+			p.volume_db = linear_to_db(maxf(ws[i] * vol, 0.0001))
+			if not p.playing:
+				p.play()
+		elif p.playing:
+			p.stop()
+	var sp := absf(speed)
+	if road_p.stream != null:
+		if live and sp > 0.5:
+			road_p.pitch_scale = 0.7 + minf(sp / 30.0, 1.0) * 0.8
+			road_p.volume_db = linear_to_db(clampf(sp / 25.0, 0.0, 1.0) * 0.5 + 0.0001)
+			if not road_p.playing:
+				road_p.play()
+		elif road_p.playing:
+			road_p.stop()
+	if horn_p.stream != null:
+		if live and horn_on:
+			if not horn_p.playing:
+				horn_p.play()
+		elif horn_p.playing:
+			horn_p.stop()
+	if amb_p.stream != null:
+		if live:
+			if not amb_p.playing:
+				amb_p.play()
+		elif amb_p.playing:
+			amb_p.stop()
+	var bl := fmod(blink, 0.8) < 0.4
+	if bl != last_blink:
+		last_blink = bl
+		if live and (sig != 0 or hazard) and tick_p.stream != null:
+			tick_p.pitch_scale = 1.0 if bl else 0.8
+			tick_p.play()
+
+
 func _clear_car():
 	if model != null:
 		model.queue_free()
@@ -437,6 +593,7 @@ func _load_car(idx: int):
 	_clear_car()
 	car_idx = idx
 	var cfg: Dictionary = CARS[idx]
+	engine_type = cfg["eng"]
 	if ResourceLoader.exists(cfg["file"]):
 		var res = load(cfg["file"])
 		if res is PackedScene:
@@ -449,6 +606,8 @@ func _load_car(idx: int):
 	_build_interior(cfg)
 	_plate_at(cfg["pf"], true, cfg)
 	_plate_at(cfg["pr"], false, cfg)
+	if eng_p.size() > 0:
+		_apply_sounds()
 	_set_inside(false)
 
 
@@ -713,6 +872,7 @@ func _sim(dt: float):
 			rpm = 0.0
 			stalls += 1
 			_say("Mesin mati! Injak kopling, netral, tekan START", 4.0)
+			_play_sfx("stall")
 	else:
 		rpm = lerpf(rpm, 0.0, clampf(dt * 6.0, 0.0, 1.0))
 
@@ -741,6 +901,12 @@ func _sim(dt: float):
 	heading = clampf(heading, -0.6, 0.6)
 	pos += Vector3(-sin(heading), 0.0, -cos(heading)) * speed * dt
 	pos.x = clampf(pos.x, -6.4, -1.2)  # tetap di jalurnya, tidak naik median
+	var zmin := -route_len + 6.0
+	if pos.z < zmin or pos.z > 6.0:
+		if (pos.z < zmin and speed > 0.0) or (pos.z > 6.0 and speed < 0.0):
+			speed = 0.0
+			_say("Ujung jalan", 2.0)
+		pos.z = clampf(pos.z, zmin, 6.0)
 	pos.y = _elev(-pos.z)
 
 
@@ -835,6 +1001,8 @@ func _enter_menu():
 	clouds.visible = false
 	for ch: Node3D in chunks:
 		ch.visible = false
+	barriers.visible = false
+	horn_on = false
 	car.position = Vector3.ZERO
 	car.rotation = Vector3.ZERO
 	wheel3d.rotation.y = 0.0
@@ -860,7 +1028,12 @@ func _enter_play():
 	cam_mode = 1
 	for ch: Node3D in chunks:
 		ch.visible = true
-	_place_chunks()
+	barriers.visible = true
+	wheel_angle = 0.0
+	wheel_held = false
+	lever = Vector2(0.5, 0.5)
+	horn_on = false
+	start_timer = 0.0
 	_say("Injak kopling, lalu tekan START", 6.0)
 
 
@@ -872,18 +1045,27 @@ func _process(delta):
 	else:
 		if not clutch_held and clutch > 0.0:
 			clutch = move_toward(clutch, 0.0, dt * 3.0)  # pedal kopling kembali sendiri
+		if not wheel_held and wheel_angle != 0.0:
+			wheel_angle = move_toward(wheel_angle, 0.0, (3.0 + absf(speed) * 0.8) * dt)
+			steer_in = wheel_angle / LOCK
 		if not paused:
+			if start_timer > 0.0:
+				start_timer -= dt
+				if start_timer <= 0.0:
+					engine_on = true
+					rpm = IDLE
+					_say("Mesin hidup", 2.0)
 			_sim(dt)
 			time_h += dt / 60.0   # 1 detik nyata = 1 menit di game
 		car.position = pos
 		var s0 := -pos.z
 		var pitch := atan2(_elev(s0 + 3.0) - _elev(s0 - 3.0), 6.0)
 		car.rotation = Vector3(pitch, heading, 0.0)
-		wheel3d.rotation.y = -steer_in * 1.6
+		wheel3d.rotation.y = -wheel_angle
 		_update_car_parts(dt)
-		_place_chunks()
 		clouds.position = Vector3(pos.x, 0.0, pos.z)
 	_apply_time()
+	_update_audio(dt)
 	_update_camera()
 	if msg_t > 0.0:
 		msg_t -= dt
@@ -924,19 +1106,19 @@ func _update_camera():
 func _vp() -> Vector2:
 	return get_viewport().get_visible_rect().size
 
-func r_clutch(s: Vector2) -> Rect2: return Rect2(s.x * 0.03, s.y * 0.40, s.x * 0.09, s.y * 0.56)
-func r_brake(s: Vector2) -> Rect2: return Rect2(s.x * 0.80, s.y * 0.60, s.x * 0.08, s.y * 0.36)
-func r_gas(s: Vector2) -> Rect2: return Rect2(s.x * 0.90, s.y * 0.46, s.x * 0.08, s.y * 0.50)
-func r_shift(s: Vector2) -> Rect2: return Rect2(s.x * 0.80, s.y * 0.12, s.x * 0.18, s.y * 0.33)
-func r_start(s: Vector2) -> Rect2: return Rect2(s.x * 0.80, s.y * 0.02, s.x * 0.18, s.y * 0.085)
-func r_btn(i: int, s: Vector2) -> Rect2: return Rect2(s.x * 0.03 + i * s.x * 0.115, s.y * 0.03, s.x * 0.105, s.y * 0.085)
-func r_top(i: int, s: Vector2) -> Rect2: return Rect2(s.x * (0.28 + i * 0.07), s.y * 0.03, s.x * 0.065, s.y * 0.085)
-func r_hb(s: Vector2) -> Rect2: return Rect2(s.x * 0.155, s.y * 0.40, s.x * 0.12, s.y * 0.09)
+func r_clutch(s: Vector2) -> Rect2: return Rect2(s.x * 0.02, s.y * 0.48, s.x * 0.07, s.y * 0.49)
+func r_brake(s: Vector2) -> Rect2: return Rect2(s.x * 0.83, s.y * 0.60, s.x * 0.07, s.y * 0.37)
+func r_gas(s: Vector2) -> Rect2: return Rect2(s.x * 0.91, s.y * 0.48, s.x * 0.07, s.y * 0.49)
+func r_shift(s: Vector2) -> Rect2: return Rect2(s.x * 0.82, s.y * 0.13, s.x * 0.16, s.y * 0.31)
+func r_start(s: Vector2) -> Rect2: return Rect2(s.x * 0.79, s.y * 0.03, s.x * 0.09, s.y * 0.075)
+func r_btn(i: int, s: Vector2) -> Rect2: return Rect2(s.x * (0.02 + i * 0.085), s.y * 0.03, s.x * (0.075 if i == 0 else 0.04), s.y * 0.075)
+func r_top(i: int, s: Vector2) -> Rect2: return Rect2(s.x * (0.02 + i * 0.056), s.y * 0.135, s.x * 0.052, s.y * 0.062)
+func r_hb(s: Vector2) -> Rect2: return Rect2(s.x * 0.89, s.y * 0.03, s.x * 0.09, s.y * 0.075)
 func r_menu(s: Vector2) -> Rect2: return Rect2(s.x * 0.4, s.y * 0.62, s.x * 0.2, s.y * 0.1)
 func r_menu_btn(i: int, s: Vector2) -> Rect2: return Rect2(s.x * (0.26 + i * 0.17), s.y * 0.76, s.x * 0.15, s.y * 0.2)
 func r_gear(s: Vector2) -> Rect2: return Rect2(s.x * 0.93, s.y * 0.03, s.x * 0.05, s.y * 0.09)
-func wheel_c(s: Vector2) -> Vector2: return Vector2(s.x * 0.24, s.y * 0.74)
-func wheel_r(s: Vector2) -> float: return s.y * 0.19
+func wheel_c(s: Vector2) -> Vector2: return Vector2(s.x * 0.098 + wheel_r(s), s.y * 0.71)
+func wheel_r(s: Vector2) -> float: return s.y * 0.17
 
 
 func shift_pt(g: int, r: Rect2) -> Vector2:
@@ -991,10 +1173,6 @@ func _top_action(i: int):
 	elif i == 2:
 		sig = 0 if sig == 1 else 1
 	elif i == 3:
-		low_on = not low_on
-	elif i == 4:
-		high_on = not high_on
-	elif i == 6:
 		var presets := [6.5, 12.0, 17.0, 20.5]
 		var nxt: float = presets[0]
 		for pz in presets:
@@ -1003,6 +1181,10 @@ func _top_action(i: int):
 				break
 		time_h = nxt
 		_say("Jam %s - %s" % [_clock(), _period()], 2.0)
+	elif i == 4:
+		low_on = not low_on
+	elif i == 5:
+		high_on = not high_on
 
 
 func _touch_down(idx: int, p: Vector2):
@@ -1028,13 +1210,17 @@ func _touch_down(idx: int, p: Vector2):
 		return
 	if r_hb(s).has_point(p):
 		handbrake = not handbrake
-		_say("Rem tangan " + ("terpasang" if handbrake else "dilepas"), 1.5)
+		_say("(P) HANDBRAKE " + ("ON" if handbrake else "OFF"), 1.5)
+		_play_sfx("hb")
 		return
-	for i in 7:
+	for i in 8:
 		if r_top(i, s).has_point(p):
-			if i == 5:
+			if i == 6:
 				touches[idx] = "pass"
 				pass_on = true
+			elif i == 7:
+				touches[idx] = "horn"
+				horn_on = true
 			else:
 				_top_action(i)
 			return
@@ -1074,18 +1260,13 @@ func _touch_move(idx: int, p: Vector2, rel: Vector2):
 		var r := r_brake(s)
 		brake = clampf(1.0 - (p.y - r.position.y) / r.size.y, 0.0, 1.0)
 	elif role == "wheel":
-		var raw := clampf((p.x - wheel_c(s).x) / (wheel_r(s) * 1.8), -1.0, 1.0)
-		steer_in = signf(raw) * pow(absf(raw), 1.6)
+		wheel_held = true
+		var rr := (p - rel) - wheel_c(s)
+		var dn := maxf(rr.length_squared(), pow(wheel_r(s) * 0.45, 2.0))
+		wheel_angle = clampf(wheel_angle + (rr.x * rel.y - rr.y * rel.x) / dn, -LOCK, LOCK)
+		steer_in = wheel_angle / LOCK
 	elif role == "shift":
-		var r := r_shift(s)
-		var best := 0
-		var bd := 1e9
-		for g in [1, 2, 3, 4, 5, -1, 0]:
-			var d := p.distance_to(shift_pt(g, r))
-			if d < bd:
-				bd = d
-				best = g
-		_try_gear(best)
+		_shift_drag(p, s)
 	elif role == "orbit":
 		var other := Vector2.ZERO
 		var has_other := false
@@ -1117,9 +1298,71 @@ func _touch_up(idx: int):
 	elif role == "brake":
 		brake = 0.0
 	elif role == "wheel":
-		steer_in = 0.0
+		wheel_held = false
+	elif role == "shift":
+		_shift_release()
+	elif role == "horn":
+		horn_on = false
 	touches.erase(idx)
 	tpos.erase(idx)
+
+
+func _shift_drag(p: Vector2, s: Vector2):
+	var r := r_shift(s)
+	var fx := clampf((p.x - r.position.x) / r.size.x, 0.2, 0.8)
+	var fy := clampf((p.y - r.position.y) / r.size.y, 0.2, 0.8)
+	var cols := [0.2, 0.5, 0.8]
+	var ci := 0
+	for i in 3:
+		if absf(lever.x - cols[i]) < absf(lever.x - cols[ci]):
+			ci = i
+	var at_col: bool = absf(lever.x - cols[ci]) < 0.04
+	if absf(lever.y - 0.5) < 0.08:
+		lever.x = move_toward(lever.x, fx, 0.05)      # baris netral: geser kiri-kanan, ada batas kecepatan
+		if at_col:
+			lever.y = move_toward(lever.y, fy, 0.05)  # hanya bisa masuk gigi dari tengah jalur
+			if absf(lever.y - 0.5) >= 0.08:
+				lever.x = cols[ci]
+	else:
+		lever.y = move_toward(lever.y, fy, 0.05)      # di dalam jalur: hanya maju-mundur
+	_apply_lever()
+
+
+func _shift_release():
+	var cols := [0.2, 0.5, 0.8]
+	var ci := 0
+	for i in 3:
+		if absf(lever.x - cols[i]) < absf(lever.x - cols[ci]):
+			ci = i
+	lever.x = cols[ci]
+	if lever.y <= 0.28:
+		lever.y = 0.2
+	elif lever.y >= 0.72:
+		lever.y = 0.8
+	else:
+		lever.y = 0.5
+	_apply_lever()
+
+
+func _apply_lever():
+	var cols := [0.2, 0.5, 0.8]
+	var ci := 0
+	for i in 3:
+		if absf(lever.x - cols[i]) < absf(lever.x - cols[ci]):
+			ci = i
+	var g := 0
+	if lever.y <= 0.28:
+		g = [1, 3, 5][ci]
+	elif lever.y >= 0.72:
+		g = [2, 4, -1][ci]
+	if g != gear:
+		if g != 0 and clutch < 0.7:
+			_say("Injak kopling dulu sebelum pindah gigi", 2.0)
+			lever.y = 0.3 if lever.y < 0.5 else 0.7
+			return
+		gear = g
+		if g != 0:
+			_play_sfx("clunk")
 
 
 func _try_gear(g: int):
@@ -1135,35 +1378,51 @@ func _start_pressed():
 	if engine_on:
 		engine_on = false
 		return
+	if start_timer > 0.0:
+		return
 	if gear != 0 and clutch < 0.7:
 		_say("Injak kopling dulu atau masuk netral", 3.0)
 		return
-	engine_on = true
-	rpm = IDLE
-	_say("Mesin hidup. Injak kopling, masuk gigi 1", 3.0)
+	start_timer = 0.9
+	if starter_p != null and starter_p.stream != null:
+		starter_p.play()
 
 
 # ---------------------------------------------------------------- gambar HUD
 
 func _btn(c: Control, r: Rect2, text: String, on := false, oncol := Color(0.2, 0.5, 0.3, 0.9), fs := 16):
 	var font := ThemeDB.fallback_font
-	c.draw_rect(r, oncol if on else Color(0.15, 0.17, 0.2, 0.85))
-	c.draw_string(font, r.position + Vector2(0, r.size.y * 0.66), text, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, fs, Color.WHITE)
+	if on:
+		sb_on.bg_color = oncol
+		c.draw_style_box(sb_on, r)
+	else:
+		c.draw_style_box(sb_btn, r)
+	c.draw_string(font, r.position + Vector2(0, r.size.y * 0.64), text, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, fs, Color.WHITE)
 
 
 func _pedal(c: Control, r: Rect2, text: String, v: float, col: Color):
 	var font := ThemeDB.fallback_font
-	c.draw_rect(r, Color(0, 0, 0, 0.45))
-	var fh := r.size.y * v
-	c.draw_rect(Rect2(r.position.x + r.size.x * 0.2, r.end.y - fh, r.size.x * 0.6, fh), Color(col.r, col.g, col.b, 0.6))
-	c.draw_rect(Rect2(r.position.x, r.end.y - fh - 3.0, r.size.x, 6.0), col)
-	c.draw_string(font, r.position + Vector2(0, -6), text, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 16, col)
+	c.draw_style_box(sb_btn, r)
+	var top_y := r.position.y + r.size.y * 0.17
+	var slot := Rect2(r.position.x + r.size.x * 0.36, top_y, r.size.x * 0.28, r.size.y * 0.66)
+	c.draw_style_box(sb_slot, slot)
+	var fh := slot.size.y * v
+	if fh > 3.0:
+		c.draw_rect(Rect2(slot.position.x + 2.0, slot.end.y - fh, slot.size.x - 4.0, fh), Color(col.r, col.g, col.b, 0.9))
+	var ph := r.size.y * 0.13
+	var py := lerpf(r.end.y - ph - r.size.y * 0.05, top_y, v)
+	var pad := Rect2(r.position.x + r.size.x * 0.12, py, r.size.x * 0.76, ph)
+	c.draw_style_box(sb_pad, pad)
+	for i in 3:
+		var ly := pad.position.y + pad.size.y * (0.25 + 0.25 * i)
+		c.draw_line(Vector2(pad.position.x + 6.0, ly), Vector2(pad.end.x - 6.0, ly), Color(0.3, 0.3, 0.33), 2.0)
+	c.draw_string(font, r.position + Vector2(0, r.size.y * 0.12), text, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 14, col)
 
 
 func _draw_msg(c: Control, s: Vector2, font: Font):
 	if msg_t > 0.0:
-		c.draw_rect(Rect2(s.x * 0.27, s.y * 0.17, s.x * 0.46, s.y * 0.08), Color(0, 0, 0, 0.65))
-		c.draw_string(font, Vector2(s.x * 0.27, s.y * 0.225), msg, HORIZONTAL_ALIGNMENT_CENTER, s.x * 0.46, 20, Color(1, 0.95, 0.8))
+		c.draw_style_box(sb_btn, Rect2(s.x * 0.30, s.y * 0.22, s.x * 0.40, s.y * 0.07))
+		c.draw_string(font, Vector2(s.x * 0.30, s.y * 0.268), msg, HORIZONTAL_ALIGNMENT_CENTER, s.x * 0.40, 18, Color(1, 0.95, 0.8))
 
 
 func _draw_menu(c: Control, s: Vector2, font: Font):
@@ -1205,36 +1464,62 @@ func _draw_menu(c: Control, s: Vector2, font: Font):
 
 
 func _draw_dash(c: Control, s: Vector2, font: Font, gtxt: String, bl: bool):
-	var pr := Rect2(s.x * 0.43, s.y * 0.72, s.x * 0.36, s.y * 0.27)
+	var pr := Rect2(s.x * 0.40, s.y * 0.76, s.x * 0.30, s.y * 0.23)
 	c.draw_style_box(sb_dash, pr)
+	var k := pr.size.y / 150.0
 	var rad := pr.size.y * 0.40
 	var cl := Vector2(pr.position.x + pr.size.x * 0.17, pr.position.y + pr.size.y * 0.55)
 	var cr := Vector2(pr.end.x - pr.size.x * 0.17, cl.y)
 	for ct in [cl, cr]:
-		c.draw_circle(ct, rad + 3.0, Color.WHITE)
+		c.draw_circle(ct, rad + 2.0, Color.WHITE)
 		c.draw_circle(ct, rad, Color.BLACK)
-	c.draw_string(font, cl + Vector2(-rad, -rad * 0.3), "RPM", HORIZONTAL_ALIGNMENT_CENTER, rad * 2.0, 18, Color.WHITE)
-	c.draw_string(font, cl + Vector2(-rad, rad * 0.5), "%d" % int(rpm), HORIZONTAL_ALIGNMENT_CENTER, rad * 2.0, 26, Color.WHITE)
-	c.draw_string(font, cr + Vector2(-rad, -rad * 0.3), "KM/H", HORIZONTAL_ALIGNMENT_CENTER, rad * 2.0, 18, Color.WHITE)
-	c.draw_string(font, cr + Vector2(-rad, rad * 0.5), "%d" % int(absf(speed) * 3.6), HORIZONTAL_ALIGNMENT_CENTER, rad * 2.0, 26, Color.WHITE)
+	c.draw_string(font, cl + Vector2(-rad, -rad * 0.3), "RPM", HORIZONTAL_ALIGNMENT_CENTER, rad * 2.0, int(16 * k), Color.WHITE)
+	c.draw_string(font, cl + Vector2(-rad, rad * 0.5), "%d" % int(rpm), HORIZONTAL_ALIGNMENT_CENTER, rad * 2.0, int(24 * k), Color.WHITE)
+	c.draw_string(font, cr + Vector2(-rad, -rad * 0.3), "KM/H", HORIZONTAL_ALIGNMENT_CENTER, rad * 2.0, int(16 * k), Color.WHITE)
+	c.draw_string(font, cr + Vector2(-rad, rad * 0.5), "%d" % int(absf(speed) * 3.6), HORIZONTAL_ALIGNMENT_CENTER, rad * 2.0, int(24 * k), Color.WHITE)
 	var gb := Rect2(pr.position.x + pr.size.x * 0.39, pr.position.y + pr.size.y * 0.14, pr.size.x * 0.22, pr.size.y * 0.74)
 	c.draw_rect(gb, Color(0.09, 0.13, 0.2))
-	c.draw_string(font, gb.position + Vector2(0, 20), "GEAR", HORIZONTAL_ALIGNMENT_CENTER, gb.size.x, 15, Color.WHITE)
-	c.draw_string(font, gb.position + Vector2(0, gb.size.y * 0.62), gtxt, HORIZONTAL_ALIGNMENT_CENTER, gb.size.x, 46, Color.WHITE)
+	c.draw_string(font, gb.position + Vector2(0, 18.0 * k), "GEAR", HORIZONTAL_ALIGNMENT_CENTER, gb.size.x, int(14 * k), Color.WHITE)
+	c.draw_string(font, gb.position + Vector2(0, gb.size.y * 0.62), gtxt, HORIZONTAL_ALIGNMENT_CENTER, gb.size.x, int(42 * k), Color.WHITE)
 	var ltxt := "Off"
 	if high_on or pass_on:
 		ltxt = "High"
 	elif low_on:
 		ltxt = "Low"
-	c.draw_string(font, gb.position + Vector2(4, gb.size.y - 24), "Light: " + ltxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
-	c.draw_string(font, gb.position + Vector2(4, gb.size.y - 8), "Hazard: " + ("On" if hazard else "Off"), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
-	var ay := gb.position.y + 22.0
+	c.draw_string(font, gb.position + Vector2(4, gb.size.y - 22.0 * k), "Light: " + ltxt, HORIZONTAL_ALIGNMENT_LEFT, -1, int(11 * k), Color.WHITE)
+	c.draw_string(font, gb.position + Vector2(4, gb.size.y - 8.0 * k), "Hazard: " + ("On" if hazard else "Off"), HORIZONTAL_ALIGNMENT_LEFT, -1, int(11 * k), Color.WHITE)
+	var ay := gb.position.y + 20.0 * k
 	var axl := (cl.x + rad + gb.position.x) * 0.5
 	var axr := (cr.x - rad + gb.end.x) * 0.5
 	var lon := (sig == -1 or hazard) and bl
 	var ron := (sig == 1 or hazard) and bl
-	c.draw_colored_polygon(PackedVector2Array([Vector2(axl - 14, ay), Vector2(axl + 10, ay - 11), Vector2(axl + 10, ay + 11)]), Color(0.2, 1.0, 0.3) if lon else Color(0.4, 0.4, 0.4))
-	c.draw_colored_polygon(PackedVector2Array([Vector2(axr + 14, ay), Vector2(axr - 10, ay - 11), Vector2(axr - 10, ay + 11)]), Color(0.2, 1.0, 0.3) if ron else Color(0.4, 0.4, 0.4))
+	var ah := 11.0 * k
+	c.draw_colored_polygon(PackedVector2Array([Vector2(axl - 13.0 * k, ay), Vector2(axl + 9.0 * k, ay - ah), Vector2(axl + 9.0 * k, ay + ah)]), Color(0.2, 1.0, 0.3) if lon else Color(0.4, 0.4, 0.4))
+	c.draw_colored_polygon(PackedVector2Array([Vector2(axr + 13.0 * k, ay), Vector2(axr - 9.0 * k, ay - ah), Vector2(axr - 9.0 * k, ay + ah)]), Color(0.2, 1.0, 0.3) if ron else Color(0.4, 0.4, 0.4))
+
+
+func _draw_shifter(c: Control, s: Vector2, font: Font, gtxt: String):
+	var sr := r_shift(s)
+	c.draw_style_box(sb_btn, sr)
+	var rail := Color(0.03, 0.03, 0.05)
+	var th := maxf(6.0, s.y * 0.016)
+	var xs := [0.2, 0.5, 0.8]
+	var ym := sr.position.y + sr.size.y * 0.5
+	c.draw_line(Vector2(sr.position.x + sr.size.x * 0.2, ym), Vector2(sr.position.x + sr.size.x * 0.8, ym), rail, th)
+	for i in 3:
+		var x: float = sr.position.x + sr.size.x * xs[i]
+		var y0 := sr.position.y + sr.size.y * 0.2
+		var y1 := sr.position.y + sr.size.y * 0.8
+		c.draw_line(Vector2(x, y0), Vector2(x, y1), rail, th)
+		c.draw_circle(Vector2(x, y0), th * 0.85, Color(0.18, 0.18, 0.22))
+		c.draw_circle(Vector2(x, y1), th * 0.85, Color(0.18, 0.18, 0.22))
+		var tl: String = ["1", "3", "5"][i]
+		var bt: String = ["2", "4", "R"][i]
+		c.draw_string(font, Vector2(x - 20.0, sr.position.y + sr.size.y * 0.12), tl, HORIZONTAL_ALIGNMENT_CENTER, 40, 14, Color(0.85, 0.85, 0.9))
+		c.draw_string(font, Vector2(x - 20.0, sr.position.y + sr.size.y * 0.96), bt, HORIZONTAL_ALIGNMENT_CENTER, 40, 14, Color(0.85, 0.85, 0.9))
+	var kp := sr.position + Vector2(lever.x * sr.size.x, lever.y * sr.size.y)
+	c.draw_circle(kp, s.y * 0.034, Color(0.3, 0.7, 1.0))
+	c.draw_string(font, kp + Vector2(-20.0, s.y * 0.012), gtxt, HORIZONTAL_ALIGNMENT_CENTER, 40, 16, Color(0.02, 0.05, 0.1))
 
 
 func draw_hud(c: Control):
@@ -1254,52 +1539,57 @@ func draw_hud(c: Control):
 	_pedal(c, r_brake(s), "BRAKE", brake, Color(0.9, 0.25, 0.2))
 	_pedal(c, r_gas(s), "GAS", gas, Color(0.3, 0.9, 0.4))
 
-	# setir di samping kopling
+	# setir menempel di samping kopling
 	var wc := wheel_c(s)
 	var wr := wheel_r(s)
-	var a := steer_in * 1.6
-	c.draw_circle(wc, wr, Color(0, 0, 0, 0.25))
-	c.draw_arc(wc, wr, 0.0, TAU, 48, Color(0.12, 0.12, 0.14), 10.0)
+	var a := wheel_angle
+	var ring := Color(0.13, 0.13, 0.16)
+	c.draw_circle(wc, wr, Color(0, 0, 0, 0.3))
+	c.draw_arc(wc, wr * 0.93, 0.0, TAU, 48, ring, wr * 0.13)
 	for k in [0.0, PI, PI * 0.5]:
-		c.draw_line(wc, wc + Vector2.from_angle(a + k) * wr, Color(0.12, 0.12, 0.14), 8.0)
-	c.draw_circle(wc, wr * 0.18, Color(0.2, 0.2, 0.23))
-	c.draw_circle(wc + Vector2.from_angle(a - PI * 0.5) * wr, 6.0, Color(0.9, 0.2, 0.2))
+		c.draw_line(wc, wc + Vector2.from_angle(a + k) * wr * 0.9, ring, wr * 0.09)
+	c.draw_circle(wc, wr * 0.2, Color(0.22, 0.22, 0.26))
+	c.draw_circle(wc + Vector2.from_angle(a - PI * 0.5) * wr * 0.93, wr * 0.06, Color(0.9, 0.2, 0.2))
 
-	# tuas gigi
-	var sr := r_shift(s)
-	c.draw_rect(sr, Color(0.2, 0.2, 0.22, 0.85))
-	var top := shift_pt(1, sr)
-	var bot := shift_pt(2, sr)
-	for gx in [1, 3, 5]:
-		var x0 := shift_pt(gx, sr)
-		c.draw_line(x0, Vector2(x0.x, bot.y), Color(0.05, 0.05, 0.06), 10.0)
-	c.draw_line(Vector2(top.x, sr.position.y + sr.size.y * 0.5), Vector2(shift_pt(5, sr).x, sr.position.y + sr.size.y * 0.5), Color(0.05, 0.05, 0.06), 10.0)
-	for g in [1, 2, 3, 4, 5, -1]:
-		var pt := shift_pt(g, sr)
-		c.draw_circle(pt, 9.0, Color(0.35, 0.35, 0.4))
-		c.draw_string(font, pt + Vector2(-8, -14), "R" if g == -1 else str(g), HORIZONTAL_ALIGNMENT_CENTER, 16, 16, Color.WHITE)
-	c.draw_circle(shift_pt(gear, sr), 15.0, Color(0.3, 0.7, 1.0))
-	c.draw_string(font, shift_pt(gear, sr) + Vector2(-8, 7), gtxt, HORIZONTAL_ALIGNMENT_CENTER, 16, 18, Color.BLACK)
+	_draw_shifter(c, s, font, gtxt)
 
-	# tombol utama
-	_btn(c, r_btn(0, s), "CAM %d" % cam_mode, false, Color(), 20)
-	_btn(c, r_btn(1, s), "PLAY" if paused else "PAUSE", false, Color(), 20)
-	_btn(c, r_start(s), "STOP" if engine_on else "START", engine_on, Color(0.2, 0.5, 0.3, 0.9), 20)
-	_btn(c, r_hb(s), "REM TANGAN", handbrake, Color(0.8, 0.2, 0.15, 0.9), 18)
+	_btn(c, r_btn(0, s), "CAMERA", false, Color(), 14)
+	_btn(c, r_btn(1, s), "PLAY" if paused else "||", false, Color(), 16)
+	_btn(c, r_start(s), "STOP" if engine_on else "START", engine_on, Color(0.2, 0.5, 0.3, 0.95), 17)
+	_btn(c, r_hb(s), "(P)", handbrake, Color(0.8, 0.25, 0.2, 0.95), 18)
 
-	# sein, hazard, lampu, jam
-	var labels := ["", "HAZ", "", "LAMPU", "JAUH", "PASS", _clock()]
-	var actives := [sig == -1, hazard, sig == 1, low_on, high_on, pass_on, false]
-	for i in 7:
+	# sein, hazard, jam, lampu, klakson
+	var labels := ["", "HAZ", "", _clock(), "LAMPU", "JAUH", "PASS", "KLAKSON"]
+	var actives := [sig == -1, hazard, sig == 1, false, low_on, high_on, pass_on, horn_on]
+	for i in 8:
 		var r := r_top(i, s)
-		_btn(c, r, labels[i], actives[i], Color(0.85, 0.6, 0.1, 0.9) if i < 3 else Color(0.2, 0.5, 0.8, 0.9), 14)
+		_btn(c, r, labels[i], actives[i], Color(0.85, 0.6, 0.1, 0.95) if i < 3 else Color(0.2, 0.5, 0.8, 0.95), 11)
 		if i == 0 or i == 2:
 			var dir := -1.0 if i == 0 else 1.0
 			var cx := r.position.x + r.size.x * 0.5
 			var cy := r.position.y + r.size.y * 0.5
-			c.draw_colored_polygon(PackedVector2Array([Vector2(cx + dir * 14.0, cy), Vector2(cx - dir * 10.0, cy - 13.0), Vector2(cx - dir * 10.0, cy + 13.0)]), Color(1, 0.8, 0.2))
+			var ah := r.size.y * 0.25
+			c.draw_colored_polygon(PackedVector2Array([Vector2(cx + dir * ah, cy), Vector2(cx - dir * ah * 0.7, cy - ah), Vector2(cx - dir * ah * 0.7, cy + ah)]), Color(1, 0.8, 0.2))
 
-	_draw_dash(c, s, font, gtxt, bl)
+	if handbrake:
+		var pl := Rect2(s.x * 0.02, s.y * 0.21, s.x * 0.12, s.y * 0.05)
+		c.draw_style_box(sb_pill, pl)
+		c.draw_string(font, pl.position + Vector2(0, pl.size.y * 0.7), "(P) HANDBRAKE", HORIZONTAL_ALIGNMENT_CENTER, pl.size.x, 13, Color(0.95, 0.35, 0.3))
+
+	# gigi + kecepatan + bar rpm (tengah atas)
+	var ib := Rect2(s.x * 0.41, s.y * 0.02, s.x * 0.18, s.y * 0.105)
+	c.draw_style_box(sb_btn, ib)
+	c.draw_string(font, ib.position + Vector2(0, ib.size.y * 0.66), gtxt, HORIZONTAL_ALIGNMENT_CENTER, ib.size.x * 0.28, int(ib.size.y * 0.62), Color(0.35, 0.8, 1.0))
+	c.draw_line(Vector2(ib.position.x + ib.size.x * 0.30, ib.position.y + 8.0), Vector2(ib.position.x + ib.size.x * 0.30, ib.end.y - 12.0), Color(0.3, 0.3, 0.35), 1.5)
+	c.draw_string(font, ib.position + Vector2(ib.size.x * 0.33, ib.size.y * 0.66), "%d" % int(absf(speed) * 3.6), HORIZONTAL_ALIGNMENT_LEFT, -1, int(ib.size.y * 0.55), Color.WHITE)
+	c.draw_string(font, ib.position + Vector2(ib.size.x * 0.76, ib.size.y * 0.66), "km/h", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.8, 0.85))
+	var bar := Rect2(ib.position.x + 10.0, ib.end.y - 9.0, ib.size.x - 20.0, 4.0)
+	c.draw_rect(bar, Color(0.2, 0.22, 0.27))
+	c.draw_rect(Rect2(bar.position.x, bar.position.y, bar.size.x * clampf(rpm / 7000.0, 0.0, 1.0), bar.size.y), Color(0.35, 0.8, 1.0) if rpm < 6000.0 else Color(0.95, 0.2, 0.15))
+	c.draw_rect(Rect2(bar.end.x - bar.size.x * 0.14, bar.position.y, bar.size.x * 0.14, bar.size.y), Color(0.8, 0.15, 0.1, 0.5))
+
+	if cam_mode == 1:
+		_draw_dash(c, s, font, gtxt, bl)
 	_draw_msg(c, s, font)
 	if paused:
 		c.draw_rect(Rect2(0, 0, s.x, s.y), Color(0, 0, 0, 0.5))
